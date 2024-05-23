@@ -94,10 +94,60 @@ char* caesar_decipher(char* text, int key) {
 }
 
 void handle_auth(char* username, char* password, ClientState* client_state, char* response) {
-    print("Handling -> Authentication attempt from anonymous user\n");
-    client_state->authenticated = 1;  // Mark client as authenticated
-    strcpy(client_state->username, username);
-    sprintf(response, "Authentication successful for user %s", username);
+    printf("Handling -> Authentication attempt from user: %s\n", username);
+
+    char user_file_path[BUFFER_SIZE];
+    snprintf(user_file_path, sizeof(user_file_path), "users/%s.txt", username);
+
+    FILE *user_file = fopen(user_file_path, "r");
+    if (user_file == NULL) {
+        snprintf(response, BUFFER_SIZE, "Authentication failed: User %s not found", username);
+        return;
+    }
+
+    char stored_password[BUFFER_SIZE];
+    if (fgets(stored_password, sizeof(stored_password), user_file) == NULL) {
+        snprintf(response, BUFFER_SIZE, "Authentication failed: Error reading password for user %s", username);
+        fclose(user_file);
+        return;
+    }
+    fclose(user_file);
+
+    // Remove newline character from stored_password if it exists
+    stored_password[strcspn(stored_password, "\n")] = '\0';
+
+    if (strcmp(stored_password, password) == 0) {
+        client_state->authenticated = 1;
+        strcpy(client_state->username, username);
+        snprintf(response, BUFFER_SIZE, "Authentication successful for user %s", username);
+    } else {
+        snprintf(response, BUFFER_SIZE, "Authentication failed: Incorrect password for user %s", username);
+    }
+}
+
+void handle_signup(char* username, char* password, char* response) {
+    printf("Handling -> Signup attempt for user: %s\n", username);
+
+    char user_file_path[BUFFER_SIZE];
+    snprintf(user_file_path, sizeof(user_file_path), "users/%s.txt", username);
+
+    FILE *user_file = fopen(user_file_path, "r");
+    if (user_file != NULL) {
+        fclose(user_file);
+        snprintf(response, BUFFER_SIZE, "Signup failed: User %s already exists", username);
+        return;
+    }
+
+    user_file = fopen(user_file_path, "w");
+    if (user_file == NULL) {
+        snprintf(response, BUFFER_SIZE, "Signup failed: Error creating user %s", username);
+        return;
+    }
+
+    fprintf(user_file, "%s\n", password);
+    fclose(user_file);
+
+    snprintf(response, BUFFER_SIZE, "Signup successful for user %s", username);
 }
 
 void handle_send_message(char* username, char* message, char* response) {
@@ -105,7 +155,7 @@ void handle_send_message(char* username, char* message, char* response) {
 }
 
 void handle_create_group(char* username, char* group_name, char* response) {
-    print("Handling -> Create Group for user: %s\n", username);
+    printf("Handling -> Create Group for user: %s\n", username);
     char group_path[BUFFER_SIZE];
     snprintf(group_path, sizeof(group_path), "groups/%s", group_name);
 
@@ -144,6 +194,23 @@ void handle_create_group(char* username, char* group_name, char* response) {
     snprintf(response, BUFFER_SIZE, "Group '%s' created successfully.", group_name);
 }
 
+void handle_send_message_to_group(char* username, char* group_name, char* message, char* response) {
+    printf("Handling -> Send message to group %s from user: %s\n", group_name, username);
+    char group_path[BUFFER_SIZE];
+    snprintf(group_path, sizeof(group_path), "groups/%s/messages.txt", group_name);
+
+    FILE *messages_file = fopen(group_path, "a");
+    if (!messages_file) {
+        snprintf(response, BUFFER_SIZE, "Error: Group '%s' does not exist.", group_name);
+        return;
+    }
+
+    fprintf(messages_file, "\n-> %s\n%s\n", username, message);
+    fclose(messages_file);
+
+    snprintf(response, BUFFER_SIZE, "Message sent to group '%s' successfully.", group_name);
+}
+
 void handle_client_connection(Socket client) {
     char buffer[BUFFER_SIZE];
     ssize_t bytes_read;
@@ -169,6 +236,8 @@ void handle_client_connection(Socket client) {
         char response[BUFFER_SIZE];
         if (strcmp(lines[0], "Auth") == 0) {
             handle_auth(lines[1], lines[2], &client_state, response);
+        } else if (strcmp(lines[0], "Signup") == 0) {
+            handle_signup(lines[1], lines[2], response);
         } else {
             if (!client_state.authenticated) {
                 snprintf(response, BUFFER_SIZE, "Not authenticated");
@@ -176,6 +245,8 @@ void handle_client_connection(Socket client) {
                 handle_send_message(client_state.username, lines[1], response);
             } else if (strcmp(lines[0], "create_group") == 0) {
                 handle_create_group(client_state.username, lines[2], response);
+            } else if (strcmp(lines[0], "send_message_to_group") == 0) {
+                handle_send_message_to_group(client_state.username, lines[2], lines[3], response);
             } else {
                 snprintf(response, BUFFER_SIZE, "Unknown service: %s", lines[0]);
             }
@@ -218,6 +289,14 @@ int main() {
     printf("[DEBUG] Creating base directory: %s\n", base_path);
     if (mkdir(base_path, 0777) == -1 && errno != EEXIST) {
         fprintf(stderr, "Error creating base directory '%s': %s\n", base_path, strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+
+    // Ensure the base "users" directory exists
+    char users_base_path[BUFFER_SIZE] = "users";
+    printf("[DEBUG] Creating base directory: %s\n", users_base_path);
+    if (mkdir(users_base_path, 0777) == -1 && errno != EEXIST) {
+        fprintf(stderr, "Error creating base directory '%s': %s\n", users_base_path, strerror(errno));
         exit(EXIT_FAILURE);
     }
 

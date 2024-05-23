@@ -2,10 +2,10 @@ import socket
 import tkinter as tk
 from tkinter import messagebox
 
-SERVER_IP = '192.168.4.175'  # Replace with your server's IP address
+SERVER_IP = '10.7.1.45' 
 SERVER_PORT = 5004
 BUFFER_SIZE = 1024
-CIPHER_KEY = 3  # Basic displacement key for the Caesar cipher
+CIPHER_KEY = 3  # Displacement key for Caesar cipher
 
 class ClientConnection:
     def __init__(self, server_ip, server_port):
@@ -63,13 +63,25 @@ def handle_auth():
     request = f"Auth\n{username}\n{password}"
     response = connection.send_request(request)
     auth_response_label.config(text=response)
+    if "successful" in response:
+        show_authenticated_ui()
 
-def handle_send_message():
-    global username
-    message = message_entry.get("1.0", tk.END).strip()
-    request = f"send_message\n{username}\n{message}"
+def handle_signup():
+    username = signup_username_entry.get()
+    password = signup_password_entry.get()
+    request = f"Signup\n{username}\n{password}"
     response = connection.send_request(request)
-    message_response_label.config(text=response)
+    signup_response_label.config(text=response)
+    if "successful" in response:
+        show_authenticated_ui()
+
+def handle_send_message_to_group():
+    global username
+    group_name = group_message_group_name_entry.get()
+    message = group_message_entry.get("1.0", tk.END).strip()
+    request = f"send_message_to_group\n{username}\n{group_name}\n{message}"
+    response = connection.send_request(request)
+    group_message_response_label.config(text=response)
 
 def handle_create_group():
     global username
@@ -78,6 +90,10 @@ def handle_create_group():
     response = connection.send_request(request)
     group_response_label.config(text=response)
 
+def show_authenticated_ui():
+    login_signup_frame.pack_forget()
+    authenticated_frame.pack(pady=10, fill=tk.X)
+
 app = tk.Tk()
 app.title("Client Application")
 
@@ -85,22 +101,23 @@ app.title("Client Application")
 connection = ClientConnection(SERVER_IP, SERVER_PORT)
 connection.connect()
 
-# Authentication Service UI
-auth_frame_wrapper = tk.Frame(app, bg="blue", padx=5, pady=5)
-auth_frame_wrapper.pack(pady=10, fill=tk.X)
+# Login or Signup UI
+login_signup_frame = tk.Frame(app, padx=5, pady=5)
+login_signup_frame.pack(pady=10, fill=tk.X)
 
-auth_frame = tk.Frame(auth_frame_wrapper, bg="white")
+# Authentication UI
+auth_frame = tk.Frame(login_signup_frame)
 auth_frame.pack(padx=10, pady=10, fill=tk.X)
 
-auth_title_label = tk.Label(auth_frame, text="Authentication Service", bg="white")
+auth_title_label = tk.Label(auth_frame, text="Authentication Service")
 auth_title_label.grid(row=0, column=0, columnspan=2)
 
-auth_username_label = tk.Label(auth_frame, text="Username:", bg="white")
+auth_username_label = tk.Label(auth_frame, text="Username:")
 auth_username_label.grid(row=1, column=0)
 auth_username_entry = tk.Entry(auth_frame)
 auth_username_entry.grid(row=1, column=1)
 
-auth_password_label = tk.Label(auth_frame, text="Password:", bg="white")
+auth_password_label = tk.Label(auth_frame, text="Password:")
 auth_password_label.grid(row=2, column=0)
 auth_password_entry = tk.Entry(auth_frame, show="*")
 auth_password_entry.grid(row=2, column=1)
@@ -108,41 +125,46 @@ auth_password_entry.grid(row=2, column=1)
 auth_button = tk.Button(auth_frame, text="Authenticate", command=handle_auth)
 auth_button.grid(row=3, column=0, columnspan=2)
 
-auth_response_label = tk.Label(auth_frame, text="", bg="white")
+auth_response_label = tk.Label(auth_frame, text="")
 auth_response_label.grid(row=4, column=0, columnspan=2)
 
-# Send Message Service UI
-message_frame_wrapper = tk.Frame(app, bg="blue", padx=5, pady=5)
-message_frame_wrapper.pack(pady=10, fill=tk.X)
+# Signup UI
+signup_frame = tk.Frame(login_signup_frame)
+signup_frame.pack(padx=10, pady=10, fill=tk.X)
 
-message_frame = tk.Frame(message_frame_wrapper, bg="white")
-message_frame.pack(padx=10, pady=10, fill=tk.X)
+signup_title_label = tk.Label(signup_frame, text="Signup Service")
+signup_title_label.grid(row=0, column=0, columnspan=2)
 
-message_title_label = tk.Label(message_frame, text="Send Message Service", bg="white")
-message_title_label.grid(row=0, column=0, columnspan=2)
+signup_username_label = tk.Label(signup_frame, text="Username:")
+signup_username_label.grid(row=1, column=0)
+signup_username_entry = tk.Entry(signup_frame)
+signup_username_entry.grid(row=1, column=1)
 
-message_label = tk.Label(message_frame, text="Message:", bg="white")
-message_label.grid(row=1, column=0)
-message_entry = tk.Text(message_frame, height=5, width=30)
-message_entry.grid(row=1, column=1)
+signup_password_label = tk.Label(signup_frame, text="Password:")
+signup_password_label.grid(row=2, column=0)
+signup_password_entry = tk.Entry(signup_frame, show="*")
+signup_password_entry.grid(row=2, column=1)
 
-message_button = tk.Button(message_frame, text="Send Message", command=handle_send_message)
-message_button.grid(row=2, column=0, columnspan=2)
+signup_button = tk.Button(signup_frame, text="Signup", command=handle_signup)
+signup_button.grid(row=3, column=0, columnspan=2)
 
-message_response_label = tk.Label(message_frame, text="", bg="white")
-message_response_label.grid(row=3, column=0, columnspan=2)
+signup_response_label = tk.Label(signup_frame, text="")
+signup_response_label.grid(row=4, column=0, columnspan=2)
+
+# Authenticated UI
+authenticated_frame = tk.Frame(app, padx=5, pady=5)
 
 # Create Group Service UI
-group_frame_wrapper = tk.Frame(app, bg="blue", padx=5, pady=5)
+group_frame_wrapper = tk.Frame(authenticated_frame, padx=5, pady=5)
 group_frame_wrapper.pack(pady=10, fill=tk.X)
 
-group_frame = tk.Frame(group_frame_wrapper, bg="white")
+group_frame = tk.Frame(group_frame_wrapper)
 group_frame.pack(padx=10, pady=10, fill=tk.X)
 
-group_title_label = tk.Label(group_frame, text="Create Group Service", bg="white")
+group_title_label = tk.Label(group_frame, text="Create Group Service")
 group_title_label.grid(row=0, column=0, columnspan=2)
 
-group_name_label = tk.Label(group_frame, text="Group Name:", bg="white")
+group_name_label = tk.Label(group_frame, text="Group Name:")
 group_name_label.grid(row=1, column=0)
 group_name_entry = tk.Entry(group_frame)
 group_name_entry.grid(row=1, column=1)
@@ -150,8 +172,34 @@ group_name_entry.grid(row=1, column=1)
 group_button = tk.Button(group_frame, text="Create Group", command=handle_create_group)
 group_button.grid(row=2, column=0, columnspan=2)
 
-group_response_label = tk.Label(group_frame, text="", bg="white")
+group_response_label = tk.Label(group_frame, text="")
 group_response_label.grid(row=3, column=0, columnspan=2)
+
+# Send Message to Group Service UI
+group_message_frame_wrapper = tk.Frame(authenticated_frame, padx=5, pady=5)
+group_message_frame_wrapper.pack(pady=10, fill=tk.X)
+
+group_message_frame = tk.Frame(group_message_frame_wrapper)
+group_message_frame.pack(padx=10, pady=10, fill=tk.X)
+
+group_message_title_label = tk.Label(group_message_frame, text="Send Message to Group Service")
+group_message_title_label.grid(row=0, column=0, columnspan=2)
+
+group_message_group_name_label = tk.Label(group_message_frame, text="Group Name:")
+group_message_group_name_label.grid(row=1, column=0)
+group_message_group_name_entry = tk.Entry(group_message_frame)
+group_message_group_name_entry.grid(row=1, column=1)
+
+group_message_label = tk.Label(group_message_frame, text="Message:")
+group_message_label.grid(row=2, column=0)
+group_message_entry = tk.Text(group_message_frame, height=5, width=30)
+group_message_entry.grid(row=2, column=1)
+
+group_message_button = tk.Button(group_message_frame, text="Send Message to Group", command=handle_send_message_to_group)
+group_message_button.grid(row=3, column=0, columnspan=2)
+
+group_message_response_label = tk.Label(group_message_frame, text="")
+group_message_response_label.grid(row=4, column=0, columnspan=2)
 
 # Clean up connection on exit
 def on_closing():
