@@ -226,7 +226,6 @@ void broadcast_update() {
     close(udp_socket);
 }
 
-
 void broadcast_group_message(char* group_name) {
     char messages_path[BUFFER_SIZE];
     snprintf(messages_path, sizeof(messages_path), "groups/%s/messages.txt", group_name);
@@ -310,6 +309,119 @@ void handle_add_user_to_group(char* group_name, char* username_to_add, char* res
     broadcast_update();
 }
 
+void handle_delete_user_from_group(char* group_name, char* username_to_delete, char* response) {
+    printf("Handling -> Delete user %s from group %s\n", username_to_delete, group_name);
+
+    char user_file_path[BUFFER_SIZE];
+    snprintf(user_file_path, sizeof(user_file_path), "groups/%s/users.txt", group_name);
+
+    FILE *user_file = fopen(user_file_path, "r");
+    if (!user_file) {
+        snprintf(response, BUFFER_SIZE, "Error: Group '%s' does not exist.", group_name);
+        return;
+    }
+
+    char temp_file_path[BUFFER_SIZE];
+    snprintf(temp_file_path, sizeof(temp_file_path), "groups/%s/users_temp.txt", group_name);
+
+    FILE *temp_file = fopen(temp_file_path, "w");
+    if (!temp_file) {
+        snprintf(response, BUFFER_SIZE, "Error: Could not create temporary file.");
+        fclose(user_file);
+        return;
+    }
+
+    char line[BUFFER_SIZE];
+    int found = 0;
+    while (fgets(line, sizeof(line), user_file)) {
+        line[strcspn(line, "\n")] = '\0'; // Remove newline character
+        if (strcmp(line, username_to_delete) != 0) {
+            fprintf(temp_file, "%s\n", line);
+        } else {
+            found = 1;
+        }
+    }
+
+    fclose(user_file);
+    fclose(temp_file);
+
+    if (found) {
+        if (remove(user_file_path) != 0 || rename(temp_file_path, user_file_path) != 0) {
+            snprintf(response, BUFFER_SIZE, "Error: Could not update users file.");
+        } else {
+            snprintf(response, BUFFER_SIZE, "User '%s' deleted from group '%s' successfully.", username_to_delete, group_name);
+            broadcast_update(); 
+        }
+    } else {
+        remove(temp_file_path);
+        snprintf(response, BUFFER_SIZE, "Error: User '%s' not found in group '%s'.", username_to_delete, group_name);
+    }
+}
+
+void handle_delete_group(char* group_name, char* response) {
+    printf("Handling -> Delete group %s\n", group_name);
+
+    char group_path[BUFFER_SIZE];
+    snprintf(group_path, sizeof(group_path), "groups/%s", group_name);
+
+    char user_file_path[BUFFER_SIZE];
+    snprintf(user_file_path, sizeof(user_file_path), "%s/users.txt", group_path);
+
+    FILE *user_file = fopen(user_file_path, "r");
+    if (!user_file) {
+        snprintf(response, BUFFER_SIZE, "Error: Group '%s' does not exist.", group_name);
+        return;
+    }
+
+    // Check the number of users in the group
+    int user_count = 0;
+    char line[BUFFER_SIZE];
+    while (fgets(line, sizeof(line), user_file)) {
+        user_count++;
+    }
+    fclose(user_file);
+
+    if (user_count != 1) {
+        snprintf(response, BUFFER_SIZE, "Error: Group '%s' cannot be deleted because it does not have exactly one user.", group_name);
+        return;
+    }
+
+    DIR *dir = opendir(group_path);
+    if (!dir) {
+        snprintf(response, BUFFER_SIZE, "Error: Could not open group directory '%s'.", group_name);
+        return;
+    }
+
+    struct dirent *entry;
+    char file_path[BUFFER_SIZE];
+    int error = 0;
+
+    // Delete all files within the group directory
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        snprintf(file_path, sizeof(file_path), "%s/%s", group_path, entry->d_name);
+        if (remove(file_path) != 0) {
+            error = 1;
+            snprintf(response, BUFFER_SIZE, "Error: Could not delete file '%s'.", file_path);
+            break;
+        }
+    }
+    closedir(dir);
+
+    // If no errors occurred, delete the group directory itself
+    if (!error) {
+        if (rmdir(group_path) == 0) {
+            snprintf(response, BUFFER_SIZE, "Group '%s' deleted successfully.", group_name);
+            broadcast_update();  // Broadcast update to all clients
+        } else {
+            snprintf(response, BUFFER_SIZE, "Error: Could not delete group directory '%s'.", group_path);
+        }
+    }
+}
+
+
 
 void handle_get_messages_from_group(char* group_name, char* response) {
     printf("Handling -> Get messages from group %s\n", group_name);
@@ -332,8 +444,6 @@ void handle_get_messages_from_group(char* group_name, char* response) {
 
     snprintf(response, sizeof(message_contents) + BUFFER_SIZE, "%s\n%s", group_name, message_contents);
 }
-
-
 
 void handle_send_message_to_group(char* username, char* group_name, char* message, char* response) {
     printf("Handling -> Send message to group %s from user: %s\n", group_name, username);
@@ -453,11 +563,16 @@ void handle_client_connection(Socket client) {
             } else if (strcmp(lines[0], "add_user_to_group") == 0) {
                 printf("Service requested: Add user to group by user %s\n", client_state.username);
                 handle_add_user_to_group(lines[1], lines[2], response);
+            } else if (strcmp(lines[0], "delete_user") == 0) {
+                printf("Service requested: Delete user from group by user %s\n", client_state.username);
+                handle_delete_user_from_group(lines[1], lines[2], response);
+            } else if (strcmp(lines[0], "delete_group") == 0) {
+                printf("Service requested: Delete group by user %s\n", client_state.username);
+                handle_delete_group(lines[1], response);
             } else if (strcmp(lines[0], "get_messages_from_group") == 0) {
                 printf("Service requested: Get messages from group %s\n", lines[1]);
                 handle_get_messages_from_group(lines[1], response);
-            }
-            else {
+            } else {
                 snprintf(response, BUFFER_SIZE, "Unknown service: %s", lines[0]);
             }
         }

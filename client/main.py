@@ -3,7 +3,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, scrolledtext, simpledialog
 
-SERVER_IP = '192.168.4.175'
+SERVER_IP = '192.168.47.173'
 SERVER_PORT = 5004
 BUFFER_SIZE = 1024
 CIPHER_KEY = 3  # Displacement key for Caesar cipher
@@ -94,6 +94,7 @@ def handle_get_user_group_names():
     group_names = response.strip().split('\n')
     for group_name in group_names:
         group_listbox.insert(tk.END, group_name)
+        group_listbox.itemconfig(tk.END, {'fg': 'black'})  # Initialize group items with default color
 
 
 def handle_create_group():
@@ -108,7 +109,14 @@ def handle_create_group():
 
 
 def on_group_select(event):
+    # Get the selected group name
     selected_group = group_listbox.get(group_listbox.curselection())
+    
+    # Change the selected group color back to the original (black)
+    group_index = group_listbox.curselection()[0]
+    group_listbox.itemconfig(group_index, {'fg': 'black'})
+
+    # Update the current group label
     current_group_label.config(text=selected_group)
 
     # Request messages from the selected group
@@ -172,9 +180,46 @@ def show_add_user_dialog():
 
     tk.Button(add_user_window, text="Add User", command=add_user).pack(pady=5)
 
+def show_delete_user_dialog():
+    selected_group = group_listbox.get(tk.ACTIVE)
+    if not selected_group:
+        messagebox.showerror("Error", "No group selected")
+        return
+
+    def delete_user():
+        username_to_delete = username_entry.get()
+        if not username_to_delete:
+            messagebox.showerror("Error", "Username field is empty")
+            return
+
+        request = f"delete_user\n{selected_group}\n{username_to_delete}"
+        response = connection.send_request(request)
+        messagebox.showinfo("Delete User from Group", response)
+        delete_user_window.destroy()
+
+    delete_user_window = tk.Toplevel(app)
+    delete_user_window.title("Delete User from Group")
+
+    tk.Label(delete_user_window, text="Username to delete:").pack(pady=5)
+    username_entry = tk.Entry(delete_user_window)
+    username_entry.pack(pady=5)
+
+    tk.Button(delete_user_window, text="Delete User", command=delete_user).pack(pady=5)
+
+def handle_delete_group():
+    selected_group = group_listbox.get(tk.ACTIVE)
+    if not selected_group:
+        messagebox.showerror("Error", "No group selected")
+        return
+
+    request = f"delete_group\n{selected_group}"
+    response = connection.send_request(request)
+    messagebox.showinfo("Delete Group", response)
+    if "successfully" in response:
+        handle_get_user_group_names()
 
 def listen_for_broadcast():
-    udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_socket = socket.socket(socket.AF_INET, SOCK_DGRAM)
     udp_socket.bind(('', BROADCAST_PORT))
 
     while True:
@@ -186,6 +231,11 @@ def listen_for_broadcast():
         else:
             group_name, group_messages_content = message.split('\n', 1)
             group_messages[group_name] = group_messages_content.strip()
+            
+            # Change the color of the group name to red when a message is received
+            group_index = group_listbox.get(0, tk.END).index(group_name)
+            group_listbox.itemconfig(group_index, {'fg': 'red'})
+            
             if group_listbox.get(tk.ACTIVE) == group_name:
                 update_message_display(group_name)
 
@@ -280,6 +330,12 @@ current_group_label.pack(side=tk.LEFT)
 
 add_user_button = tk.Button(group_header_frame, text="Add User", command=show_add_user_dialog)
 add_user_button.pack(side=tk.LEFT, padx=10)
+
+delete_user_button = tk.Button(group_header_frame, text="Delete User", command=show_delete_user_dialog)
+delete_user_button.pack(side=tk.LEFT, padx=10)
+
+delete_group_button = tk.Button(group_header_frame, text="Delete Group", command=handle_delete_group)
+delete_group_button.pack(side=tk.LEFT, padx=10)
 
 message_display = scrolledtext.ScrolledText(right_frame, state=tk.DISABLED, wrap=tk.WORD)
 message_display.pack(padx=10, pady=10, fill=tk.BOTH,expand=True)
