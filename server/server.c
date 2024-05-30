@@ -67,7 +67,7 @@ Socket server_accept(Socket server) {
         return -1;
     }
 
-    printf("[+] Accepted connection from %s:%d\n",
+    printf("Connection accepted from %s:%d\n",
            inet_ntoa(client_address.sin_addr),
            ntohs(client_address.sin_port));
     return client;
@@ -237,8 +237,43 @@ void broadcast_group_message(char* group_name) {
         perror("Error sending broadcast message");
     }
 
+    printf("********************************************************************************\n");
+    printf("Broadcasting messages to group: %s\n", group_name);
+    printf("********************************************************************************\n");
+
     close(udp_socket);
 }
+
+void handle_add_user_to_group(char* group_name, char* username_to_add, char* response) {
+    printf("Handling -> Add user to group %s\n", group_name);
+
+    char user_file_path[BUFFER_SIZE];
+    snprintf(user_file_path, sizeof(user_file_path), "groups/%s/users.txt", group_name);
+
+    FILE *user_file = fopen(user_file_path, "a+");
+    if (!user_file) {
+        snprintf(response, BUFFER_SIZE, "Error: Group '%s' does not exist.", group_name);
+        return;
+    }
+
+    // Check if the user is already in the group
+    char line[BUFFER_SIZE];
+    while (fgets(line, sizeof(line), user_file)) {
+        line[strcspn(line, "\n")] = '\0'; // Remove newline character
+        if (strcmp(line, username_to_add) == 0) {
+            snprintf(response, BUFFER_SIZE, "User '%s' is already in the group '%s'.", username_to_add, group_name);
+            fclose(user_file);
+            return;
+        }
+    }
+
+    // Add the user to the group
+    fprintf(user_file, "%s\n", username_to_add);
+    fclose(user_file);
+
+    snprintf(response, BUFFER_SIZE, "User '%s' added to group '%s' successfully.", username_to_add, group_name);
+}
+
 
 void handle_send_message_to_group(char* username, char* group_name, char* message, char* response) {
     printf("Handling -> Send message to group %s from user: %s\n", group_name, username);
@@ -266,6 +301,8 @@ void handle_get_user_group_names(char* username, char* response) {
     char group_path[BUFFER_SIZE];
     char user_file_path[BUFFER_SIZE];
     char group_names[BUFFER_SIZE] = "";
+    int group_count = 0;
+    
     d = opendir("groups");
 
     if (d) {
@@ -280,6 +317,7 @@ void handle_get_user_group_names(char* username, char* response) {
                         if (strcmp(user, username) == 0) {
                             strcat(group_names, dir->d_name);
                             strcat(group_names, "\n");
+                            group_count++;
                             break;
                         }
                     }
@@ -290,7 +328,11 @@ void handle_get_user_group_names(char* username, char* response) {
         closedir(d);
     }
 
-    snprintf(response, BUFFER_SIZE, "%s", group_names);
+    if (group_count == 0) {
+        snprintf(response, BUFFER_SIZE, "No groups found for user %s", username);
+    } else {
+        snprintf(response, BUFFER_SIZE, "%s", group_names);
+    }
 }
 
 void handle_client_connection(Socket client) {
@@ -300,6 +342,9 @@ void handle_client_connection(Socket client) {
 
     while ((bytes_read = recv(client, buffer, sizeof(buffer) - 1, 0)) > 0) {
         buffer[bytes_read] = '\0';
+        
+        // Separate each request with a long line of "-"
+        printf("--------------------------------------------------------------------------------\n");
         printf("----------------------------Received from client----------------------------\n");
         printf("-> Encrypted: %s\n", buffer);
 
@@ -317,17 +362,22 @@ void handle_client_connection(Socket client) {
 
         char response[BUFFER_SIZE];
         if (strcmp(lines[0], "Auth") == 0) {
+            printf("Service requested: Auth by user %s\n", lines[1]);
             handle_auth(lines[1], lines[2], &client_state, response);
         } else if (strcmp(lines[0], "Signup") == 0) {
+            printf("Service requested: Signup by user %s\n", lines[1]);
             handle_signup(lines[1], lines[2], response);
         } else {
             if (!client_state.authenticated) {
                 snprintf(response, BUFFER_SIZE, "Not authenticated");
             } else if (strcmp(lines[0], "send_message") == 0) {
+                printf("Service requested: Send message by user %s\n", client_state.username);
                 handle_send_message(client_state.username, lines[1], response);
             } else if (strcmp(lines[0], "create_group") == 0) {
+                printf("Service requested: Create group by user %s\n", client_state.username);
                 handle_create_group(client_state.username, lines[2], response);
             } else if (strcmp(lines[0], "send_message_to_group") == 0) {
+                printf("Service requested: Send message to group by user %s\n", client_state.username);
                 // Combine the remaining lines into a single message with line breaks
                 char message[BUFFER_SIZE] = "";
                 for (int i = 3; i < line_count; i++) {
@@ -338,15 +388,20 @@ void handle_client_connection(Socket client) {
                 }
                 handle_send_message_to_group(client_state.username, lines[2], message, response);
             } else if (strcmp(lines[0], "get_user_group_names") == 0) {
+                printf("Service requested: Get user group names by user %s\n", client_state.username);
                 handle_get_user_group_names(client_state.username, response);
-            } else {
+            } else if (strcmp(lines[0], "add_user_to_group") == 0) {
+                printf("Service requested: Add user to group by user %s\n", client_state.username);
+                handle_add_user_to_group(lines[1], lines[2], response);
+            }
+            else {
                 snprintf(response, BUFFER_SIZE, "Unknown service: %s", lines[0]);
             }
         }
 
         printf("----------------------------Sending to client----------------------------\n");
         char* encrypted_response = caesar_cipher(response, CIPHER_KEY);
-        printf("-> Encrypted: %s\n\n\n\n", encrypted_response);
+        printf("-> Encrypted: %s\n\n", encrypted_response);
 
         if (send(client, encrypted_response, strlen(encrypted_response), 0) == -1) {
             perror("Error sending response to client");
