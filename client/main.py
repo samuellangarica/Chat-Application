@@ -1,11 +1,15 @@
 import socket
+import threading
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, scrolledtext, simpledialog
 
-SERVER_IP = '10.7.1.45' 
+SERVER_IP = '192.168.4.175'
 SERVER_PORT = 5004
 BUFFER_SIZE = 1024
 CIPHER_KEY = 3  # Displacement key for Caesar cipher
+BROADCAST_PORT = 5005
+
+group_messages = {}
 
 class ClientConnection:
     def __init__(self, server_ip, server_port):
@@ -30,7 +34,7 @@ class ClientConnection:
     def send_request(self, request):
         if not self.client_socket:
             self.connect()
-        
+
         try:
             encrypted_message = caesar_cipher(request, CIPHER_KEY)
             self.client_socket.sendall(encrypted_message.encode('utf-8'))
@@ -41,6 +45,7 @@ class ClientConnection:
             messagebox.showerror("Error", str(e))
             self.disconnect()
             return None
+
 
 def caesar_cipher(text, key):
     result = []
@@ -53,8 +58,10 @@ def caesar_cipher(text, key):
             result.append(char)  # Non-alphabetic characters remain unchanged
     return ''.join(result)
 
+
 def caesar_decipher(text, key):
     return caesar_cipher(text, 26 - key)  # Reverse the key for decryption
+
 
 def handle_auth():
     global username
@@ -66,6 +73,7 @@ def handle_auth():
     if "successful" in response:
         show_authenticated_ui()
 
+
 def handle_signup():
     username = signup_username_entry.get()
     password = signup_password_entry.get()
@@ -75,24 +83,80 @@ def handle_signup():
     if "successful" in response:
         show_authenticated_ui()
 
-def handle_send_message_to_group():
+
+def handle_get_user_group_names():
     global username
-    group_name = group_message_group_name_entry.get()
-    message = group_message_entry.get("1.0", tk.END).strip()
-    request = f"send_message_to_group\n{username}\n{group_name}\n{message}"
+    request = f"get_user_group_names\n{username}"
     response = connection.send_request(request)
-    group_message_response_label.config(text=response)
+
+    # Clear the listbox and update with new group names
+    group_listbox.delete(0, tk.END)
+    group_names = response.strip().split('\n')
+    for group_name in group_names:
+        group_listbox.insert(tk.END, group_name)
+
 
 def handle_create_group():
     global username
-    group_name = group_name_entry.get()
-    request = f"create_group\n{username}\n{group_name}"
+    group_name = simpledialog.askstring("Create Group", "Enter group name:")
+    if group_name:
+        request = f"create_group\n{username}\n{group_name}"
+        response = connection.send_request(request)
+        messagebox.showinfo("Create Group", response)
+        if "successfully" in response:
+            handle_get_user_group_names()
+
+
+def on_group_select(event):
+    selected_group = group_listbox.get(group_listbox.curselection())
+    current_group_label.config(text=selected_group)
+    update_message_display(selected_group)
+
+
+def handle_send_message():
+    global username
+    selected_group = group_listbox.get(tk.ACTIVE)
+    if not selected_group:
+        messagebox.showerror("Error", "No group selected")
+        return
+
+    message = message_entry.get("1.0", tk.END).strip()
+    if not message:
+        messagebox.showerror("Error", "Message field is empty")
+        return
+
+    request = f"send_message_to_group\n{username}\n{selected_group}\n{message}"
     response = connection.send_request(request)
-    group_response_label.config(text=response)
+    message_entry.delete("1.0", tk.END)  # Clear the message entry field
+
+
+def update_message_display(group_name):
+    messages = group_messages.get(group_name, "")
+    message_display.config(state=tk.NORMAL)
+    message_display.delete(1.0, tk.END)
+    message_display.insert(tk.END, messages)
+    message_display.config(state=tk.DISABLED)
+
+
+def listen_for_broadcast():
+    udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_socket.bind(('', BROADCAST_PORT))
+
+    while True:
+        data, addr = udp_socket.recvfrom(BUFFER_SIZE * 10)
+        message = data.decode('utf-8')
+        group_name, group_messages_content = message.split('\n', 1)
+        group_messages[group_name] = group_messages_content.strip()
+        if group_listbox.get(tk.ACTIVE) == group_name:
+            update_message_display(group_name)
+
 
 def show_authenticated_ui():
     login_signup_frame.pack_forget()
-    authenticated_frame.pack(pady=10, fill=tk.X)
+    main_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+    handle_get_user_group_names()
+    threading.Thread(target=listen_for_broadcast, daemon=True).start()
+
 
 app = tk.Tk()
 app.title("Client Application")
@@ -151,60 +215,44 @@ signup_button.grid(row=3, column=0, columnspan=2)
 signup_response_label = tk.Label(signup_frame, text="")
 signup_response_label.grid(row=4, column=0, columnspan=2)
 
-# Authenticated UI
-authenticated_frame = tk.Frame(app, padx=5, pady=5)
+# Main UI after authentication
+main_frame = tk.Frame(app, padx=5, pady=5)
 
-# Create Group Service UI
-group_frame_wrapper = tk.Frame(authenticated_frame, padx=5, pady=5)
-group_frame_wrapper.pack(pady=10, fill=tk.X)
+# Left column: Group list
+left_frame = tk.Frame(main_frame, padx=5, pady=5)
+left_frame.pack(side=tk.LEFT, fill=tk.Y)
 
-group_frame = tk.Frame(group_frame_wrapper)
-group_frame.pack(padx=10, pady=10, fill=tk.X)
+create_group_button = tk.Button(left_frame, text="Create Group", command=handle_create_group)
+create_group_button.pack(fill=tk.X)
 
-group_title_label = tk.Label(group_frame, text="Create Group Service")
-group_title_label.grid(row=0, column=0, columnspan=2)
+group_listbox = tk.Listbox(left_frame, selectmode=tk.SINGLE)
+group_listbox.pack(side=tk.LEFT, fill=tk.Y, expand=True)
+group_listbox.bind('<<ListboxSelect>>', on_group_select)
 
-group_name_label = tk.Label(group_frame, text="Group Name:")
-group_name_label.grid(row=1, column=0)
-group_name_entry = tk.Entry(group_frame)
-group_name_entry.grid(row=1, column=1)
+# Right column: Group messages
+right_frame = tk.Frame(main_frame, padx=5, pady=5)
+right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-group_button = tk.Button(group_frame, text="Create Group", command=handle_create_group)
-group_button.grid(row=2, column=0, columnspan=2)
+current_group_label = tk.Label(right_frame, text="Select a group", font=("Arial", 16))
+current_group_label.pack()
 
-group_response_label = tk.Label(group_frame, text="")
-group_response_label.grid(row=3, column=0, columnspan=2)
+message_display = scrolledtext.ScrolledText(right_frame, state=tk.DISABLED, wrap=tk.WORD)
+message_display.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
-# Send Message to Group Service UI
-group_message_frame_wrapper = tk.Frame(authenticated_frame, padx=5, pady=5)
-group_message_frame_wrapper.pack(pady=10, fill=tk.X)
+message_entry_frame = tk.Frame(right_frame)
+message_entry_frame.pack(fill=tk.X, pady=5)
 
-group_message_frame = tk.Frame(group_message_frame_wrapper)
-group_message_frame.pack(padx=10, pady=10, fill=tk.X)
+message_entry = tk.Text(message_entry_frame, height=5, width=50)
+message_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
 
-group_message_title_label = tk.Label(group_message_frame, text="Send Message to Group Service")
-group_message_title_label.grid(row=0, column=0, columnspan=2)
-
-group_message_group_name_label = tk.Label(group_message_frame, text="Group Name:")
-group_message_group_name_label.grid(row=1, column=0)
-group_message_group_name_entry = tk.Entry(group_message_frame)
-group_message_group_name_entry.grid(row=1, column=1)
-
-group_message_label = tk.Label(group_message_frame, text="Message:")
-group_message_label.grid(row=2, column=0)
-group_message_entry = tk.Text(group_message_frame, height=5, width=30)
-group_message_entry.grid(row=2, column=1)
-
-group_message_button = tk.Button(group_message_frame, text="Send Message to Group", command=handle_send_message_to_group)
-group_message_button.grid(row=3, column=0, columnspan=2)
-
-group_message_response_label = tk.Label(group_message_frame, text="")
-group_message_response_label.grid(row=4, column=0, columnspan=2)
+send_button = tk.Button(message_entry_frame, text="Send", command=handle_send_message)
+send_button.pack(side=tk.LEFT, padx=5)
 
 # Clean up connection on exit
 def on_closing():
     connection.disconnect()
     app.destroy()
+
 
 app.protocol("WM_DELETE_WINDOW", on_closing)
 app.mainloop()
