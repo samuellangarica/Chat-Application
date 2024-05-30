@@ -194,6 +194,39 @@ void handle_create_group(char* username, char* group_name, char* response) {
     snprintf(response, BUFFER_SIZE, "Group '%s' created successfully.", group_name);
 }
 
+void broadcast_update() {
+    char update_message[] = "update";
+
+    Socket udp_socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udp_socket == -1) {
+        perror("Error creating UDP socket");
+        return;
+    }
+
+    int broadcast_enable = 1;
+    if (setsockopt(udp_socket, SOL_SOCKET, SO_BROADCAST, &broadcast_enable, sizeof(broadcast_enable)) == -1) {
+        perror("Error enabling broadcast option");
+        close(udp_socket);
+        return;
+    }
+
+    InternetAddress broadcast_address;
+    broadcast_address.sin_family = AF_INET;
+    broadcast_address.sin_port = htons(BROADCAST_PORT);
+    broadcast_address.sin_addr.s_addr = inet_addr("255.255.255.255");
+
+    if (sendto(udp_socket, update_message, strlen(update_message), 0, (Address *)&broadcast_address, sizeof(broadcast_address)) == -1) {
+        perror("Error sending broadcast update");
+    }
+
+    printf("********************************************************************************\n");
+    printf("Broadcasting update to all clients\n");
+    printf("********************************************************************************\n");
+
+    close(udp_socket);
+}
+
+
 void broadcast_group_message(char* group_name) {
     char messages_path[BUFFER_SIZE];
     snprintf(messages_path, sizeof(messages_path), "groups/%s/messages.txt", group_name);
@@ -272,7 +305,34 @@ void handle_add_user_to_group(char* group_name, char* username_to_add, char* res
     fclose(user_file);
 
     snprintf(response, BUFFER_SIZE, "User '%s' added to group '%s' successfully.", username_to_add, group_name);
+
+    // Broadcast update to all clients
+    broadcast_update();
 }
+
+
+void handle_get_messages_from_group(char* group_name, char* response) {
+    printf("Handling -> Get messages from group %s\n", group_name);
+    char messages_path[BUFFER_SIZE];
+    snprintf(messages_path, sizeof(messages_path), "groups/%s/messages.txt", group_name);
+
+    FILE *messages_file = fopen(messages_path, "r");
+    if (!messages_file) {
+        snprintf(response, BUFFER_SIZE, "Error: Group '%s' does not exist or unable to read messages file.", group_name);
+        return;
+    }
+
+    char message_contents[BUFFER_SIZE * 10] = "";  // Assuming message file is not larger than 10 KB
+    char line[BUFFER_SIZE];
+
+    while (fgets(line, sizeof(line), messages_file)) {
+        strcat(message_contents, line);
+    }
+    fclose(messages_file);
+
+    snprintf(response, sizeof(message_contents) + BUFFER_SIZE, "%s\n%s", group_name, message_contents);
+}
+
 
 
 void handle_send_message_to_group(char* username, char* group_name, char* message, char* response) {
@@ -393,6 +453,9 @@ void handle_client_connection(Socket client) {
             } else if (strcmp(lines[0], "add_user_to_group") == 0) {
                 printf("Service requested: Add user to group by user %s\n", client_state.username);
                 handle_add_user_to_group(lines[1], lines[2], response);
+            } else if (strcmp(lines[0], "get_messages_from_group") == 0) {
+                printf("Service requested: Get messages from group %s\n", lines[1]);
+                handle_get_messages_from_group(lines[1], response);
             }
             else {
                 snprintf(response, BUFFER_SIZE, "Unknown service: %s", lines[0]);

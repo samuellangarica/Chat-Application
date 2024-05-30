@@ -110,6 +110,15 @@ def handle_create_group():
 def on_group_select(event):
     selected_group = group_listbox.get(group_listbox.curselection())
     current_group_label.config(text=selected_group)
+
+    # Request messages from the selected group
+    request = f"get_messages_from_group\n{selected_group}"
+    response = connection.send_request(request)
+
+    # Update the group messages dictionary
+    group_messages[selected_group] = response.strip()
+
+    # Update the chat display with the new messages
     update_message_display(selected_group)
 
 
@@ -171,10 +180,14 @@ def listen_for_broadcast():
     while True:
         data, addr = udp_socket.recvfrom(BUFFER_SIZE * 10)
         message = data.decode('utf-8')
-        group_name, group_messages_content = message.split('\n', 1)
-        group_messages[group_name] = group_messages_content.strip()
-        if group_listbox.get(tk.ACTIVE) == group_name:
-            update_message_display(group_name)
+
+        if message == "update":
+            handle_get_user_group_names()
+        else:
+            group_name, group_messages_content = message.split('\n', 1)
+            group_messages[group_name] = group_messages_content.strip()
+            if group_listbox.get(tk.ACTIVE) == group_name:
+                update_message_display(group_name)
 
 
 def show_authenticated_ui():
