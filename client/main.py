@@ -137,6 +137,32 @@ def update_message_display(group_name):
     message_display.insert(tk.END, messages)
     message_display.config(state=tk.DISABLED)
 
+def show_add_user_dialog():
+    selected_group = group_listbox.get(tk.ACTIVE)
+    if not selected_group:
+        messagebox.showerror("Error", "No group selected")
+        return
+
+    def add_user():
+        username_to_add = username_entry.get()
+        if not username_to_add:
+            messagebox.showerror("Error", "Username field is empty")
+            return
+
+        request = f"add_user_to_group\n{selected_group}\n{username_to_add}"
+        response = connection.send_request(request)
+        messagebox.showinfo("Add User to Group", response)
+        add_user_window.destroy()
+
+    add_user_window = tk.Toplevel(app)
+    add_user_window.title("Add User to Group")
+
+    tk.Label(add_user_window, text="Username to add:").pack(pady=5)
+    username_entry = tk.Entry(add_user_window)
+    username_entry.pack(pady=5)
+
+    tk.Button(add_user_window, text="Add User", command=add_user).pack(pady=5)
+
 
 def listen_for_broadcast():
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -233,11 +259,17 @@ group_listbox.bind('<<ListboxSelect>>', on_group_select)
 right_frame = tk.Frame(main_frame, padx=5, pady=5)
 right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-current_group_label = tk.Label(right_frame, text="Select a group", font=("Arial", 16))
-current_group_label.pack()
+group_header_frame = tk.Frame(right_frame)
+group_header_frame.pack(fill=tk.X)
+
+current_group_label = tk.Label(group_header_frame, text="Select a group", font=("Arial", 16))
+current_group_label.pack(side=tk.LEFT)
+
+add_user_button = tk.Button(group_header_frame, text="Add User", command=show_add_user_dialog)
+add_user_button.pack(side=tk.LEFT, padx=10)
 
 message_display = scrolledtext.ScrolledText(right_frame, state=tk.DISABLED, wrap=tk.WORD)
-message_display.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+message_display.pack(padx=10, pady=10, fill=tk.BOTH,expand=True)
 
 message_entry_frame = tk.Frame(right_frame)
 message_entry_frame.pack(fill=tk.X, pady=5)
