@@ -7,11 +7,13 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <errno.h>
+#include <dirent.h>
 #include <limits.h>
 
 #define PORT 5004
 #define BUFFER_SIZE 1024
-#define CIPHER_KEY 3  // Basic displacement key for the Caesar cipher
+#define BROADCAST_PORT 5005
+#define CIPHER_KEY 3  
 
 typedef int Socket;
 typedef struct sockaddr_in InternetAddress;
@@ -23,7 +25,7 @@ typedef struct {
 } ClientState;
 
 void handle_signal(int signal) {
-    wait(NULL);  // Clean up the terminated child process
+    wait(NULL);  
 }
 
 Socket server_setup(int port) {
@@ -71,24 +73,22 @@ Socket server_accept(Socket server) {
     return client;
 }
 
-// Modified Caesar cipher to handle only alphabetic characters
 char* caesar_cipher(char* text, int key) {
     int length = strlen(text);
-    char* result = malloc(length + 1); // Allocate memory for the result
+    char* result = malloc(length + 1); 
     for (int i = 0; i < length; i++) {
         if (text[i] >= 'a' && text[i] <= 'z') {
             result[i] = ((text[i] - 'a' + key) % 26) + 'a';
         } else if (text[i] >= 'A' && text[i] <= 'Z') {
             result[i] = ((text[i] - 'A' + key) % 26) + 'A';
         } else {
-            result[i] = text[i]; // Non-alphabetic characters remain unchanged
+            result[i] = text[i]; 
         }
     }
     result[length] = '\0';
     return result;
 }
 
-// Use the same logic as caesar_cipher but with a reversed key
 char* caesar_decipher(char* text, int key) {
     return caesar_cipher(text, 26 - key); // Reverse the key for decryption
 }
@@ -194,6 +194,52 @@ void handle_create_group(char* username, char* group_name, char* response) {
     snprintf(response, BUFFER_SIZE, "Group '%s' created successfully.", group_name);
 }
 
+void broadcast_group_message(char* group_name) {
+    char messages_path[BUFFER_SIZE];
+    snprintf(messages_path, sizeof(messages_path), "groups/%s/messages.txt", group_name);
+
+    FILE *messages_file = fopen(messages_path, "r");
+    if (!messages_file) {
+        printf("Error: Group '%s' does not exist or unable to read messages file.\n", group_name);
+        return;
+    }
+
+    char message_contents[BUFFER_SIZE * 10] = "";  // Assuming message file is not larger than 10 KB
+    char line[BUFFER_SIZE];
+
+    while (fgets(line, sizeof(line), messages_file)) {
+        strcat(message_contents, line);
+    }
+    fclose(messages_file);
+
+    char broadcast_message[BUFFER_SIZE * 10 + BUFFER_SIZE];
+    snprintf(broadcast_message, sizeof(broadcast_message), "%s\n%s", group_name, message_contents);
+
+    Socket udp_socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udp_socket == -1) {
+        perror("Error creating UDP socket");
+        return;
+    }
+
+    int broadcast_enable = 1;
+    if (setsockopt(udp_socket, SOL_SOCKET, SO_BROADCAST, &broadcast_enable, sizeof(broadcast_enable)) == -1) {
+        perror("Error enabling broadcast option");
+        close(udp_socket);
+        return;
+    }
+
+    InternetAddress broadcast_address;
+    broadcast_address.sin_family = AF_INET;
+    broadcast_address.sin_port = htons(BROADCAST_PORT);
+    broadcast_address.sin_addr.s_addr = inet_addr("255.255.255.255");
+
+    if (sendto(udp_socket, broadcast_message, strlen(broadcast_message), 0, (Address *)&broadcast_address, sizeof(broadcast_address)) == -1) {
+        perror("Error sending broadcast message");
+    }
+
+    close(udp_socket);
+}
+
 void handle_send_message_to_group(char* username, char* group_name, char* message, char* response) {
     printf("Handling -> Send message to group %s from user: %s\n", group_name, username);
     char group_path[BUFFER_SIZE];
@@ -205,10 +251,46 @@ void handle_send_message_to_group(char* username, char* group_name, char* messag
         return;
     }
 
-    fprintf(messages_file, "\n-> %s\n%s\n", username, message);
+    fprintf(messages_file, "\n%s: %s\n", username, message);
     fclose(messages_file);
 
     snprintf(response, BUFFER_SIZE, "Message sent to group '%s' successfully.", group_name);
+    broadcast_group_message(group_name);  // Broadcast the updated messages to the group members
+}
+
+void handle_get_user_group_names(char* username, char* response) {
+    printf("Handling -> Get groups for user: %s\n", username);
+
+    DIR *d;
+    struct dirent *dir;
+    char group_path[BUFFER_SIZE];
+    char user_file_path[BUFFER_SIZE];
+    char group_names[BUFFER_SIZE] = "";
+    d = opendir("groups");
+
+    if (d) {
+        while ((dir = readdir(d)) != NULL) {
+            if (dir->d_type == DT_DIR && strcmp(dir->d_name, ".") != 0 && strcmp(dir->d_name, "..") != 0) {
+                snprintf(user_file_path, sizeof(user_file_path), "groups/%s/users.txt", dir->d_name);
+                FILE *user_file = fopen(user_file_path, "r");
+                if (user_file != NULL) {
+                    char user[BUFFER_SIZE];
+                    while (fgets(user, sizeof(user), user_file)) {
+                        user[strcspn(user, "\n")] = '\0';
+                        if (strcmp(user, username) == 0) {
+                            strcat(group_names, dir->d_name);
+                            strcat(group_names, "\n");
+                            break;
+                        }
+                    }
+                    fclose(user_file);
+                }
+            }
+        }
+        closedir(d);
+    }
+
+    snprintf(response, BUFFER_SIZE, "%s", group_names);
 }
 
 void handle_client_connection(Socket client) {
@@ -246,7 +328,17 @@ void handle_client_connection(Socket client) {
             } else if (strcmp(lines[0], "create_group") == 0) {
                 handle_create_group(client_state.username, lines[2], response);
             } else if (strcmp(lines[0], "send_message_to_group") == 0) {
-                handle_send_message_to_group(client_state.username, lines[2], lines[3], response);
+                // Combine the remaining lines into a single message with line breaks
+                char message[BUFFER_SIZE] = "";
+                for (int i = 3; i < line_count; i++) {
+                    strcat(message, lines[i]);
+                    if (i < line_count - 1) {
+                        strcat(message, "\n");
+                    }
+                }
+                handle_send_message_to_group(client_state.username, lines[2], message, response);
+            } else if (strcmp(lines[0], "get_user_group_names") == 0) {
+                handle_get_user_group_names(client_state.username, response);
             } else {
                 snprintf(response, BUFFER_SIZE, "Unknown service: %s", lines[0]);
             }
